@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resource Chest Game</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        .inventory {
+            margin-top: 20px;
+        }
+        .button {
+            padding: 10px 20px;
+            margin: 10px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>Resource Chest Game</h1>
+    <div>
+        <button class="button" id="claimKeyButton" onclick="claimKey()">Claim Key</button>
+        <button class="button" id="openChestButton" onclick="openChest()">Open Chest</button>
+        <button class="button" id="tradeButton" onclick="tradeForChest()">Trade for Chest</button>
+    </div>
+    <div>
+        <h2>Next Key in: <span id="countdown">Loading...</span></h2>
+    </div>
+    <div class="inventory">
+        <h2>Inventory</h2>
+        <p id="keys">Keys: 0</p>
+        <p id="treasures">Treasures: 0</p>
+        <p id="wood">Wood: 0</p>
+        <p id="iron">Iron: 0</p>
+        <p id="stone">Stone: 0</p>
+        <p id="items">Items: 0</p>
+    </div>
+
+    <script>
+        let inventory = {
+            keys: 0,
+            wood: 0,
+            iron: 0,
+            stone: 0,
+            items: 0
+        };
+
+        let keyAvailable = false;
+        let endTime = null;
+        let countdownInterval;
+
+        async function fetchState() {
+            const response = await fetch('/state');
+            const state = await response.json();
+            inventory = state.inventory;
+            keyAvailable = state.keyAvailable;
+
+            if (!state.endTime && !keyAvailable) {
+                startKeyTimer(); // Bắt đầu đếm ngược nếu endTime là null và không có key sẵn
+            } else if (!state.endTime && keyAvailable) {
+                document.getElementById('countdown').innerText = "Waiting for claim...";
+            } else {
+                endTime = state.endTime;
+                if (keyAvailable) {
+                    document.getElementById('claimKeyButton').disabled = false;
+                    document.getElementById('countdown').innerText = "Key available now!";
+                } else {
+                    startCountdown();
+                }
+            }
+            updateInventory();
+        }
+
+        async function saveState() {
+            const state = {
+                inventory,
+                endTime,
+                keyAvailable
+            };
+            await fetch('/state', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(state)
+            });
+        }
+
+        function claimKey() {
+            if (keyAvailable) {
+                inventory.keys++;
+                keyAvailable = false;
+                document.getElementById('claimKeyButton').disabled = true;
+                document.getElementById('countdown').innerText = "";
+                updateInventory();
+                endTime = null;
+                saveState();
+                fetchState();
+            } else {
+                alert("No key available yet!");
+            }
+        }
+
+        function startKeyTimer() {
+            const keyCooldown = 20 * 1000; // 20 seconds
+            endTime = Date.now() + keyCooldown;
+            keyAvailable = false;
+            saveState();
+
+            countdownInterval = setInterval(() => {
+                const timeLeft = endTime - Date.now();
+                if (timeLeft <= 0) {
+                    clearInterval(countdownInterval);
+                    keyAvailable = true;
+                    document.getElementById('claimKeyButton').disabled = false;
+                    document.getElementById('countdown').innerText = "Key available now!";
+                    saveState();
+                } else {
+                    document.getElementById('countdown').innerText = formatTime(timeLeft);
+                }
+            }, 1000);
+        }
+
+        function startCountdown() {
+            countdownInterval = setInterval(() => {
+                const timeLeft = endTime - Date.now();
+                if (timeLeft <= 0) {
+                    clearInterval(countdownInterval);
+                    keyAvailable = true;
+                    document.getElementById('claimKeyButton').disabled = false;
+                    document.getElementById('countdown').innerText = "Key available now!";
+                    saveState();
+                } else {
+                    document.getElementById('countdown').innerText = formatTime(timeLeft);
+                }
+            }, 1000);
+        }
+
+        function formatTime(ms) {
+            let seconds = Math.floor(ms / 1000);
+            let minutes = Math.floor(seconds / 60);
+            let hours = Math.floor(minutes / 60);
+            seconds = seconds % 60;
+            minutes = minutes % 60;
+            return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+
+        function pad(num) {
+            return num.toString().padStart(2, '0');
+        }
+
+        function openChest() {
+            if (inventory.treasures > 0 && inventory.keys > 0) {
+                inventory.keys--;
+                inventory.treasures--;
+                const reward = getRandomReward();
+                inventory[reward.type] += reward.amount;
+                updateInventory();
+                saveState();
+            } else {
+                alert("You don't have any keys or treasures!");
+            }
+        }
+
+        function tradeForChest() {
+            const confirmed = confirm("Are you sure you want to trade for a treasure?");
+            if (confirmed) {
+                if (inventory.keys >= 1) {
+                    // Case 2: Trade 1 key for a treasure if no treasure but have at least 1 key
+                    inventory.keys--;
+                    inventory.treasures++;
+                } else if (inventory.treasures == 0 && inventory.keys == 0 &&
+                    inventory.wood >= 50 && inventory.iron >= 50 && inventory.stone >= 50) {
+                    // Case 3: Trade resources for a treasure if no treasure, no key, but have enough resources
+                    inventory.wood -= 50;
+                    inventory.iron -= 50;
+                    inventory.stone -= 50;
+                    inventory.treasures++;
+                } else {
+                    alert("You don't have enough resources or keys!");
+                }
+                saveState();
+                updateInventory();
+            }
+        }
+
+
+        function getRandomReward() {
+            const rewards = [
+                { type: 'wood', probability: 32, amounts: [10, 20, 50, 100], amountsProb: [60, 35, 4, 1] },
+                { type: 'iron', probability: 32, amounts: [10, 20, 50, 100], amountsProb: [60, 35, 4, 1] },
+                { type: 'stone', probability: 32, amounts: [10, 20, 50, 100], amountsProb: [60, 35, 4, 1] },
+                { type: 'items', probability: 4, amounts: [1], amountsProb: [100] }
+            ];
+
+            const rewardType = weightedRandom(rewards.map(r => r.probability));
+            const rewardAmount = weightedRandom(rewards[rewardType].amountsProb);
+
+            return {
+                type: rewards[rewardType].type,
+                amount: rewards[rewardType].amounts[rewardAmount]
+            };
+        }
+
+        function weightedRandom(probabilities) {
+            let sum = 0;
+            let r = Math.random() * 100;
+            for (let i = 0; i < probabilities.length; i++) {
+                sum += probabilities[i];
+                if (r <= sum) return i;
+            }
+        }
+
+        function updateInventory() {
+            document.getElementById('keys').innerText = `Keys: ${inventory.keys}`;
+            document.getElementById('treasures').innerText = `Treasures: ${inventory.treasures}`;
+            document.getElementById('wood').innerText = `Wood: ${inventory.wood}`;
+            document.getElementById('iron').innerText = `Iron: ${inventory.iron}`;
+            document.getElementById('stone').innerText = `Stone: ${inventory.stone}`;
+            document.getElementById('items').innerText = `Items: ${inventory.items}`;
+        }
+
+        fetchState();
+    </script>
+</body>
+</html>
